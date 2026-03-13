@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Ultimate Surprise Master</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        :root { --bg: #f0f2f5; --text: #2d3436; --accent: #6c5ce7; }
+        body.dark-theme { --bg: #0f0f0f; --text: #f0f0f0; --accent: #a29bfe; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; align-items: center; padding: 20px; transition: 0.5s; overflow-x: hidden; }
+
+        .setup-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; max-width: 1000px; width: 100%; background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); color: #333; margin-bottom: 30px; }
+        .group { display: flex; flex-direction: column; gap: 5px; font-weight: bold; font-size: 13px; }
+        
+        #lock-screen { display: none; text-align: center; margin-top: 50px; }
+        #timer-text { font-size: 3rem; color: var(--accent); font-weight: 800; }
+
+        /* Card 3D Setup */
+        #card-wrapper { perspective: 2000px; display: none; margin-top: 20px; }
+        #card { 
+            width: 420px; min-height: 650px; background: white; border-radius: 30px; 
+            padding: 25px; box-shadow: 0 40px 80px rgba(0,0,0,0.3); 
+            text-align: center; position: relative; overflow: hidden;
+            transform: rotateX(40deg) translateY(150px); opacity: 0;
+            transition: all 1.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: 12px solid #fab1a0;
+        }
+        #card.open { transform: rotateX(0deg) translateY(0); opacity: 1; }
+
+        /* Multi-Photo Gallery */
+        .gallery { width: 100%; height: 280px; position: relative; border-radius: 20px; overflow: hidden; background: #eee; margin-bottom: 15px; z-index: 1; }
+        .gallery img { position: absolute; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: 1s ease-in-out; top:0; left:0; }
+        .gallery img.active { opacity: 1; }
+
+        #drawing-canvas { position: absolute; top: 0; left: 0; z-index: 10; cursor: crosshair; touch-action: none; }
+        #message { font-size: 1.6rem; font-weight: 500; margin-top: 15px; min-height: 100px; position: relative; z-index: 2; }
+        
+        button { padding: 12px; border-radius: 12px; border: none; background: var(--accent); color: white; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        button:hover { transform: scale(1.05); filter: brightness(1.1); }
+        .btn-rec.recording { background: #ff7675; animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.6; } }
+
+        .confetti { position: absolute; width: 10px; height: 10px; top: -20px; animation: fall 4s linear forwards; z-index: 100; }
+        @keyframes fall { to { transform: translateY(800px) rotate(720deg); opacity: 0; } }
+    </style>
+</head>
+<body>
+
+    <h2>💎 Ultimate Surprise Master</h2>
+
+    <div class="setup-panel">
+        <div class="group">
+            <label>Unlock Time (Optional)</label>
+            <input type="datetime-local" id="unlockTime">
+        </div>
+        <div class="group">
+            <label>Secret Password (Optional)</label>
+            <input type="password" id="passInput" placeholder="Leave empty for no password">
+        </div>
+        <div class="group">
+            <label>Surprise Message</label>
+            <input type="text" id="msg" value="Happy Birthday! You're the best! 🎉">
+        </div>
+        <div class="group">
+            <label>Gallery Photos</label>
+            <input type="file" id="galleryInput" accept="image/*" multiple onchange="handleGallery(event)">
+        </div>
+        <div class="group">
+            <label>Music Playlist / Voice</label>
+            <input type="file" id="musicInput" accept="audio/*" multiple onchange="loadPlaylist(event)">
+            <button id="recBtn" class="btn-rec" onclick="toggleRecording()">⏺ Record Voice Note</button>
+        </div>
+        <button onclick="lockAndStart()" style="grid-column: 1/-1; background:#2ecc71; font-size: 1.1rem;">🔒 SET SURPRISE & LOCK</button>
+    </div>
+
+    <div id="lock-screen">
+        <h1 id="timer-text">Waiting...</h1>
+        <div id="password-area" style="display:none; margin-top: 20px;">
+            <input type="password" id="entryPass" placeholder="Enter Password">
+            <button onclick="checkPass()">Unlock</button>
+        </div>
+    </div>
+
+    <div id="card-wrapper">
+        <div id="card">
+            <canvas id="drawing-canvas"></canvas>
+            <div class="gallery" id="gallery"></div>
+            <div id="message"></div>
+        </div>
+        <div style="margin-top:20px; display:flex; gap:15px; justify-content:center;">
+            <button onclick="saveCard()" style="background:#34495e">💾 Save Image</button>
+            <button onclick="clearDraw()" style="background:#e67e22">🧹 Clear Drawing</button>
+            <button onclick="toggleDark()" style="background:#2d3436">🌙 Toggle Theme</button>
+        </div>
+    </div>
+
+    <audio id="bgMusic"></audio>
+
+    <script>
+        let typingTimer, playlist = [], currentTrack = 0, mediaRecorder, chunks = [];
+        let galleryImgs = [], currentImg = 0, countdownInt, targetTime, secretPass = "";
+        const audio = document.getElementById('bgMusic');
+
+        // --- 1. SETUP LOGIC ---
+        function handleGallery(e) {
+            const files = Array.from(e.target.files);
+            const container = document.getElementById('gallery');
+            container.innerHTML = ""; galleryImgs = [];
+            files.forEach((file, i) => {
+                const img = document.createElement('img');
+                img.src = URL.createObjectURL(file);
+                img.className = i === 0 ? 'gallery-img active' : 'gallery-img';
+                container.appendChild(img);
+                galleryImgs.push(img);
+            });
+            if(galleryImgs.length > 1) setInterval(rotateGallery, 3500);
+        }
+
+        function rotateGallery() {
+            galleryImgs[currentImg].classList.remove('active');
+            currentImg = (currentImg + 1) % galleryImgs.length;
+            galleryImgs[currentImg].classList.add('active');
+        }
+
+        function loadPlaylist(e) { 
+            playlist = Array.from(e.target.files).map(f => ({ name: f.name, url: URL.createObjectURL(f) })); 
+            audio.src = playlist[0].url;
+        }
+
+        // --- 2. RECORDING ---
+        async function toggleRecording() {
+            const btn = document.getElementById('recBtn');
+            if (mediaRecorder?.state === "recording") {
+                mediaRecorder.stop();
+                btn.classList.remove('recording'); btn.innerText = "⏺ Record Voice Note";
+            } else {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream); chunks = [];
+                mediaRecorder.ondataavailable = e => chunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const url = URL.createObjectURL(new Blob(chunks, { type: 'audio/mpeg' }));
+                    playlist.unshift({ name: "Voice Message", url: url });
+                    audio.src = url;
+                };
+                mediaRecorder.start();
+                btn.classList.add('recording'); btn.innerText = "⏹ Stop Recording";
+            }
+        }
+
+        // --- 3. LOCK & TIMER ---
+        function lockAndStart() {
+            targetTime = new Date(document.getElementById('unlockTime').value).getTime();
+            secretPass = document.getElementById('passInput').value;
+            document.querySelector('.setup-panel').style.display = "none";
+            document.getElementById('lock-screen').style.display = "block";
+
+            countdownInt = setInterval(() => {
+                const now = new Date().getTime();
+                const diff = targetTime - now;
+                if (diff <= 0 || isNaN(targetTime)) {
+                    clearInterval(countdownInt);
+                    if(secretPass) {
+                        document.getElementById('timer-text').innerText = "Card is Ready!";
+                        document.getElementById('password-area').style.display = "block";
+                    } else {
+                        startReveal();
+                    }
+                } else {
+                    const h = Math.floor(diff / 3600000);
+                    const m = Math.floor((diff % 3600000) / 60000);
+                    const s = Math.floor((diff % 60000) / 1000);
+                    document.getElementById('timer-text').innerText = `${h}h ${m}m ${s}s`;
+                }
+            }, 1000);
+        }
+
+        function checkPass() {
+            if(document.getElementById('entryPass').value === secretPass) startReveal();
+            else alert("Wrong password!");
+        }
+
+        // --- 4. THE REVEAL ---
+        function startReveal() {
+            document.getElementById('lock-screen').style.display = "none";
+            const wrapper = document.getElementById('card-wrapper');
+            wrapper.style.display = "block";
+            
+            setTimeout(() => {
+                document.getElementById('card').classList.add('open');
+                initCanvas();
+                runTyping();
+                doConfetti();
+                if(playlist.length > 0) audio.play();
+            }, 100);
+        }
+
+        function runTyping() {
+            const text = document.getElementById('msg').value;
+            const container = document.getElementById('message');
+            container.innerHTML = ""; let i = 0;
+            function t() { if(i < text.length) { container.innerHTML += text.charAt(i++); setTimeout(t, 50); } }
+            t();
+        }
+
+        // --- 5. DRAWING CANVAS ---
+        function initCanvas() {
+            const c = document.getElementById('drawing-canvas');
+            const card = document.getElementById('card');
+            c.width = card.clientWidth; c.height = card.clientHeight;
+            const ctx = c.getContext('2d');
+            let drawing = false;
+            c.onmousedown = (e) => { drawing = true; ctx.beginPath(); ctx.moveTo(e.offsetX, e.offsetY); };
+            c.onmousemove = (e) => { if(drawing) { ctx.lineTo(e.offsetX, e.offsetY); ctx.strokeStyle = "#6c5ce7"; ctx.lineWidth=4; ctx.lineCap="round"; ctx.stroke(); } };
+            window.onmouseup = () => drawing = false;
+            // Touch support
+            c.ontouchstart = (e) => { drawing = true; const t = e.touches[0]; ctx.beginPath(); ctx.moveTo(t.clientX - c.getBoundingClientRect().left, t.clientY - c.getBoundingClientRect().top); };
+            c.ontouchmove = (e) => { if(drawing) { const t = e.touches[0]; ctx.lineTo(t.clientX - c.getBoundingClientRect().left, t.clientY - c.getBoundingClientRect().top); ctx.stroke(); e.preventDefault(); } };
+        }
+        function clearDraw() { const c = document.getElementById('drawing-canvas'); c.getContext('2d').clearRect(0,0,c.width,c.height); }
+
+        function doConfetti() {
+            for (let i = 0; i < 60; i++) {
+                const p = document.createElement('div');
+                p.className = 'confetti';
+                p.style.left = Math.random() * 100 + "%";
+                p.style.backgroundColor = `hsl(${Math.random() * 360}, 80%, 60%)`;
+                p.style.animationDuration = (Math.random() * 2 + 2) + "s";
+                document.getElementById('card').appendChild(p);
+                setTimeout(() => p.remove(), 4000);
+            }
+        }
+
+        function toggleDark() { document.body.classList.toggle('dark-theme'); }
+        function saveCard() {
+            html2canvas(document.getElementById('card'), { scale: 2 }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = 'ultimate_surprise.png';
+                link.href = canvas.toDataURL();
+                link.click();
+            });
+        }
+    </script>
+</body>
+</html>
